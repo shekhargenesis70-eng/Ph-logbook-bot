@@ -3,7 +3,8 @@ import os, sys, time, random
 from datetime import date, timedelta
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import Select
+from selenium.webdriver.support.ui import Select, WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
@@ -59,16 +60,11 @@ def js_fill(driver, el, value):
     driver.execute_script("arguments[0].dispatchEvent(new Event('input', {bubbles:true}));", el)
 
 def is_logged_out(driver):
-    """Returns True if we've been redirected to login page"""
     url = driver.current_url.lower()
-    if "login" in url or "default.aspx" in url:
-        return True
-    # Check if login form inputs exist
+    if "login" in url or "default.aspx" in url: return True
     try:
-        driver.find_element(By.ID, "txtUserID")
-        return True
-    except:
-        return False
+        driver.find_element(By.ID, "txtUserID"); return True
+    except: return False
 
 def do_login(driver):
     print("  Logging in...")
@@ -79,60 +75,92 @@ def do_login(driver):
         js_click(driver, radios[0])
     except: pass
     time.sleep(1)
-    try:
-        el = driver.find_element(By.ID, "txtUserID")
-        js_fill(driver, el, USER)
+    try: js_fill(driver, driver.find_element(By.ID, "txtUserID"), USER)
+    except: pass
+    try: js_fill(driver, driver.find_element(By.ID, "txtPassword"), PASS)
+    except: pass
+    try: js_click(driver, driver.find_element(By.ID, "myBtn"))
     except:
-        try:
-            el = driver.find_element(By.XPATH, "//input[@type='text'][1]")
-            js_fill(driver, el, USER)
-        except: pass
-    try:
-        el = driver.find_element(By.ID, "txtPassword")
-        js_fill(driver, el, PASS)
-    except:
-        try:
-            el = driver.find_element(By.XPATH, "//input[@type='password']")
-            js_fill(driver, el, PASS)
-        except: pass
-    try:
-        btn = driver.find_element(By.ID, "myBtn")
-        js_click(driver, btn)
-    except:
-        try:
-            btn = driver.find_element(By.XPATH, "//button[contains(.,'LOGIN')] | //input[@type='submit']")
-            js_click(driver, btn)
+        try: js_click(driver, driver.find_element(By.XPATH, "//button[contains(.,'LOGIN')]"))
         except: pass
     time.sleep(5)
     if is_logged_out(driver):
-        print("  ERROR: Login failed!")
+        print("  Login failed!")
         shot(driver, "LOGIN_FAILED")
         return False
     print(f"  Logged in! URL: {driver.current_url}")
     return True
 
-def ensure_logged_in(driver):
-    """Re-login if session expired"""
-    if is_logged_out(driver):
-        print("  Session expired! Re-logging in...")
-        return do_login(driver)
-    return True
+def wait_for_session_options(driver, timeout=15):
+    """Wait until cboStudentSessionDetail has more than 1 option"""
+    try:
+        WebDriverWait(driver, timeout).until(
+            lambda d: len(Select(d.find_element(By.ID, "cboStudentSessionDetail")).options) > 1
+        )
+        return True
+    except:
+        return False
 
 def select_session(driver, session_year):
-    for sel_el in driver.find_elements(By.TAG_NAME, "select"):
+    # Wait for options to load
+    print(f"  Waiting for session dropdown options...")
+    loaded = wait_for_session_options(driver, timeout=15)
+    if not loaded:
+        print(f"  Dropdown still empty after wait!")
+        # Print page source snippet for debug
         try:
-            s = Select(sel_el)
-            opts = [o.text for o in s.options]
-            if any(session_year in o for o in opts):
-                for o in opts:
-                    if session_year in o and "Select" not in o:
-                        s.select_by_visible_text(o)
-                        driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles:true}));", sel_el)
-                        print(f"  Session: {o}")
-                        return True
-        except: continue
-    print(f"  WARNING: session {session_year} not found")
-    return False
+            sel = driver.find_element(By.ID, "cboStudentSessionDetail")
+            s = Select(sel)
+            print(f"  Options: {[o.text for o in s.options]}")
+        except: pass
+        return False
+
+    try:
+        sel = driver.find_element(By.ID, "cboStudentSessionDetail")
+        s = Select(sel)
+        opts = [o.text for o in s.options]
+        print(f"  Session options: {opts}")
+        # Pick option containing session_year
+        for o in opts:
+            if session_year in o and "Select" not in o:
+                s.select_by_visible_text(o)
+                driver.execute_script(
+                    "arguments[0].dispatchEvent(new Event('change', {bubbles:true}));", sel)
+                print(f"  Selected: {o}")
+                time.sleep(3)  # Wait for form fields to load after selection
+                return True
+        print(f"  No option found containing '{session_year}'")
+        return False
+    except Exception as ex:
+        print(f"  Session select error: {ex}")
+        return False
+
+def debug_form(driver, label):
+    """Print all visible form fields"""
+    print(f"  --- DEBUG {label} ---")
+    for inp in driver.find_elements(By.TAG_NAME, "input"):
+        itype = (inp.get_attribute("type") or "text").lower()
+        if itype != "hidden":
+            print(f"    INPUT id={inp.get_attribute('id')} name={inp.get_attribute('name')} ph={inp.get_attribute('placeholder')} type={itype} visible={inp.is_displayed()}")
+    for sel in driver.find_elements(By.TAG_NAME, "select"):
+        try:
+            s = Select(sel)
+            print(f"    SELECT id={sel.get_attribute('id')}: {[o.text for o in s.options[:5]]}")
+        except: pass
+    for ta in driver.find_elements(By.TAG_NAME, "textarea"):
+        print(f"    TEXTAREA id={ta.get_attribute('id')} name={ta.get_attribute('name')}")
+    for btn in driver.find_elements(By.TAG_NAME, "button"):
+        print(f"    BUTTON text={btn.text} id={btn.get_attribute('id')}")
+    for inp in driver.find_elements(By.XPATH, "//input[@type='submit' or @type='button']"):
+        print(f"    BTN-INPUT value={inp.get_attribute('value')} id={inp.get_attribute('id')}")
+
+def fill_field_by_id(driver, field_id, value):
+    try:
+        el = driver.find_element(By.ID, field_id)
+        js_fill(driver, el, value)
+        print(f"  Filled {field_id} = {value[:30]}")
+        return True
+    except: return False
 
 def click_save(driver):
     for selector in [
@@ -140,7 +168,6 @@ def click_save(driver):
         "//button[normalize-space()='Save']",
         "//button[contains(.,'Save')]",
         "//input[contains(@value,'Save')]",
-        "//a[contains(.,'Save')]",
     ]:
         try:
             el = driver.find_element(By.XPATH, selector)
@@ -148,40 +175,25 @@ def click_save(driver):
             print("  Clicked Save")
             return True
         except: continue
-    try:
-        for el in driver.find_elements(By.TAG_NAME, "button"):
-            if "save" in el.text.lower(): js_click(driver, el); return True
-        for el in driver.find_elements(By.TAG_NAME, "input"):
-            v = el.get_attribute("value") or ""
-            if "save" in v.lower(): js_click(driver, el); return True
-    except: pass
     return False
 
 def do_entry(driver, e, idx):
     print(f"\n[{idx+1:02d}/85] {e['date']} | {e['session']} | {e['fac']} | {e['ctype']} | {e['proc']}")
 
-    # Navigate to logbook page
     driver.get(f"{BASE}/apps/PGLogBook/PGLogBookEntry.aspx")
     time.sleep(3)
 
-    # CHECK: did we get redirected to login?
     if is_logged_out(driver):
         print("  Session expired - re-logging in...")
-        if not do_login(driver):
-            print("  Re-login failed! Skipping entry.")
-            return False
-        # Navigate back to logbook
+        if not do_login(driver): return False
         driver.get(f"{BASE}/apps/PGLogBook/PGLogBookEntry.aspx")
         time.sleep(3)
 
-    # Click Add button
+    # Click Add
     add_clicked = False
-    for selector in [
-        "//a[contains(.,'Add')]", "//button[contains(.,'Add')]",
-        "//*[contains(@class,'btn')][contains(.,'Add')]",
-        "//input[@value[contains(.,'Add')]]",
-        "//*[contains(text(),'+ Add')]",
-    ]:
+    for selector in ["//a[contains(.,'Add')]", "//button[contains(.,'Add')]",
+                     "//*[contains(@class,'btn')][contains(.,'Add')]",
+                     "//input[@value[contains(.,'Add')]]"]:
         try:
             el = driver.find_element(By.XPATH, selector)
             js_click(driver, el); add_clicked = True; time.sleep(2); break
@@ -193,128 +205,105 @@ def do_entry(driver, e, idx):
 
     shot(driver, f"{idx+1:03d}_a_form")
 
-    # CHECK again after clicking Add
-    if is_logged_out(driver):
-        print("  Logged out after Add click - re-logging in...")
-        if not do_login(driver): return False
-        driver.get(f"{BASE}/apps/PGLogBook/PGLogBookEntry.aspx")
-        time.sleep(2)
-        for selector in ["//a[contains(.,'Add')]", "//button[contains(.,'Add')]"]:
-            try:
-                el = driver.find_element(By.XPATH, selector)
-                js_click(driver, el); time.sleep(2); break
-            except: continue
+    # Select session year — this triggers the rest of the form to load
+    session_ok = select_session(driver, e["session"])
+    if not session_ok:
+        shot(driver, f"{idx+1:03d}_SESSION_FAILED")
+        # Try to debug what's on the page
+        debug_form(driver, "SESSION_FAILED")
+        return False
 
-    # Select session year FIRST
-    select_session(driver, e["session"])
-    time.sleep(3)
-    shot(driver, f"{idx+1:03d}_a2_session")
+    # After session selected, wait and debug form fields
+    shot(driver, f"{idx+1:03d}_a2_after_session")
+    if idx < 2:
+        debug_form(driver, f"AFTER_SESSION_{idx+1}")
 
-    # Print inputs for debugging first 3 entries
-    if idx < 3:
-        inputs = driver.find_elements(By.TAG_NAME, "input")
-        print(f"  DEBUG inputs ({len(inputs)}):")
-        for inp in inputs:
-            itype = inp.get_attribute("type") or "text"
-            if itype != "hidden":
-                print(f"    id={inp.get_attribute('id')} ph={inp.get_attribute('placeholder')} type={itype}")
-        selects = driver.find_elements(By.TAG_NAME, "select")
-        for s in selects:
-            try:
-                sel = Select(s)
-                print(f"    SELECT id={s.get_attribute('id')}: {[o.text for o in sel.options[:4]]}")
-            except: pass
+    # Now fill fields using known IDs from the form
+    # Try known IDs first, fall back to searching
 
-    # Fill Name of Procedure
-    filled_proc = False
-    for inp in driver.find_elements(By.TAG_NAME, "input"):
-        iid   = (inp.get_attribute("id") or "").lower()
-        iname = (inp.get_attribute("name") or "").lower()
-        iph   = (inp.get_attribute("placeholder") or "").lower()
-        itype = (inp.get_attribute("type") or "text").lower()
-        if itype in ["hidden","file","checkbox","radio","submit","button","password"]: continue
-        if any(k in iid+iname+iph for k in ["proc","activity","actname","txtact","txtproc","name","title"]):
-            if "user" not in iid+iname and "pass" not in iid+iname:
-                js_fill(driver, inp, e["proc"])
-                print(f"  Procedure → {inp.get_attribute('id')}")
-                filled_proc = True; break
-    if not filled_proc:
-        visibles = [i for i in driver.find_elements(By.TAG_NAME, "input")
-                    if (i.get_attribute("type") or "text") not in ["hidden","file","checkbox","radio","submit","button","password"]
-                    and i.is_displayed()
-                    and "user" not in (i.get_attribute("id") or "").lower()
-                    and "pass" not in (i.get_attribute("id") or "").lower()]
-        if visibles:
-            js_fill(driver, visibles[0], e["proc"])
-            print(f"  Procedure → first visible: {visibles[0].get_attribute('id')}")
+    # Name of Procedure — try common IDs
+    proc_filled = False
+    for fid in ["txtActivityName", "txtProcedureName", "txtActivity",
+                "txtName", "txtActName", "txtProc", "txtLogActivity"]:
+        if fill_field_by_id(driver, fid, e["proc"]):
+            proc_filled = True; break
+    if not proc_filled:
+        # Search all visible text inputs excluding known fields
+        skip_ids = {"txtApprover", "txtUserID", "txtPassword", "txtFileDescription"}
+        for inp in driver.find_elements(By.TAG_NAME, "input"):
+            iid   = (inp.get_attribute("id") or "")
+            itype = (inp.get_attribute("type") or "text").lower()
+            if itype in ["hidden","file","checkbox","radio","submit","button","password"]: continue
+            if iid in skip_ids: continue
+            if not inp.is_displayed(): continue
+            js_fill(driver, inp, e["proc"])
+            print(f"  Procedure → fallback: {iid}")
+            proc_filled = True; break
 
-    # Fill Date
-    for inp in driver.find_elements(By.TAG_NAME, "input"):
-        iid   = (inp.get_attribute("id") or "").lower()
-        iname = (inp.get_attribute("name") or "").lower()
-        itype = (inp.get_attribute("type") or "text").lower()
-        if "date" in iid+iname or itype == "date":
-            js_fill(driver, inp, e["date"])
-            print(f"  Date → {inp.get_attribute('id')}: {e['date']}")
-            break
+    # Date — txtActivityDate or similar
+    date_filled = False
+    for fid in ["txtActivityDate", "txtDate", "txtLogDate", "txtDOA"]:
+        if fill_field_by_id(driver, fid, e["date"]):
+            date_filled = True; break
+    if not date_filled:
+        for inp in driver.find_elements(By.TAG_NAME, "input"):
+            iid = (inp.get_attribute("id") or "").lower()
+            if "date" in iid and "current" not in iid and "hidden" not in (inp.get_attribute("type") or ""):
+                js_fill(driver, inp, e["date"])
+                print(f"  Date → {inp.get_attribute('id')}"); break
 
-    # Fill Faculty
-    for inp in driver.find_elements(By.TAG_NAME, "input"):
-        iid   = (inp.get_attribute("id") or "").lower()
-        iname = (inp.get_attribute("name") or "").lower()
-        if "fac" in iid+iname:
-            js_fill(driver, inp, e["fac"])
-            time.sleep(2)
-            try:
-                sugg = driver.find_elements(By.XPATH,
-                    "//*[contains(@class,'ui-menu-item') or contains(@class,'autocomplete')]")
-                if sugg: js_click(driver, sugg[0])
-            except: pass
-            print(f"  Faculty → {inp.get_attribute('id')}: {e['fac']}")
-            break
+    # Faculty — txtApprover (confirmed from debug!)
+    try:
+        el = driver.find_element(By.ID, "txtApprover")
+        el.clear()
+        el.send_keys(e["fac"])
+        time.sleep(2.5)
+        # Click autocomplete suggestion
+        try:
+            sugg = driver.find_elements(By.XPATH,
+                "//*[contains(@class,'ui-menu-item') or contains(@class,'autocomplete') or contains(@class,'suggest')]")
+            if sugg:
+                js_click(driver, sugg[0])
+                print(f"  Faculty autocomplete selected")
+            else:
+                print(f"  Faculty → txtApprover: {e['fac']} (no autocomplete)")
+        except: pass
+    except Exception as ex:
+        print(f"  Faculty error: {ex}")
 
-    # Dropdowns
+    # Dropdowns — Procedures, Work Type, Classes, Class Type
     for sel_el in driver.find_elements(By.TAG_NAME, "select"):
         try:
             s = Select(sel_el)
             opts = [o.text for o in s.options]
             if any("Washed" in o for o in opts):
                 for o in opts:
-                    if "Washed" in o: s.select_by_visible_text(o); print(f"  Procedure type → {o}"); break
+                    if "Washed" in o: s.select_by_visible_text(o); print(f"  Procedures → {o}"); break
             elif any("Lab" in o for o in opts):
                 for o in opts:
-                    if "Lab" in o: s.select_by_visible_text(o); print(f"  Work type → {o}"); break
+                    if "Lab" in o: s.select_by_visible_text(o); print(f"  Work Type → {o}"); break
             elif any("Attended" in o for o in opts):
                 for o in opts:
                     if "Attended" in o: s.select_by_visible_text(o); print(f"  Classes → {o}"); break
             elif any("Other" in o for o in opts) and any("Sem" in o for o in opts):
                 for o in opts:
                     if e["ctype"].lower() in o.lower():
-                        s.select_by_visible_text(o); print(f"  Class type → {o}"); break
+                        s.select_by_visible_text(o); print(f"  Class Type → {o}"); break
         except: continue
 
-    # Description
-    for inp in driver.find_elements(By.TAG_NAME, "input"):
-        iid = (inp.get_attribute("id") or "").lower()
-        if "desc" in iid:
-            js_fill(driver, inp, e["desc"]); print(f"  Desc → {inp.get_attribute('id')}"); break
-    for ta in driver.find_elements(By.TAG_NAME, "textarea"):
-        iid = (ta.get_attribute("id") or "").lower()
-        if "desc" in iid:
-            js_fill(driver, ta, e["desc"]); print(f"  Desc(ta) → {ta.get_attribute('id')}"); break
+    # Description — try known IDs
+    for fid in ["txtDescription", "txtDesc", "txtLogDesc", "txtRemarks"]:
+        if fill_field_by_id(driver, fid, e["desc"]): break
 
-    # File Caption
-    for inp in driver.find_elements(By.TAG_NAME, "input"):
-        iid = (inp.get_attribute("id") or "").lower()
-        iph = (inp.get_attribute("placeholder") or "").lower()
-        if "caption" in iid+iph or ("desc" in iph and "caption" not in iid):
-            js_fill(driver, inp, e["caption"]); print(f"  Caption → {inp.get_attribute('id')}"); break
+    # File Caption — txtFileDescription (confirmed!)
+    fill_field_by_id(driver, "txtFileDescription", e["caption"])
 
     shot(driver, f"{idx+1:03d}_b_before_save")
 
     # Save
     saved = click_save(driver)
     if not saved:
+        debug_form(driver, f"SAVE_FAILED_{idx+1}")
         shot(driver, f"{idx+1:03d}_SAVE_FAILED")
         print("  SAVE FAILED"); return False
 
@@ -339,6 +328,7 @@ def do_entry(driver, e, idx):
     if submitted:
         print("  OK submitted"); return True
     else:
+        debug_form(driver, f"SUBMIT_FAILED_{idx+1}")
         shot(driver, f"{idx+1:03d}_SUBMIT_FAILED")
         print("  SUBMIT FAILED"); return False
 
@@ -352,12 +342,10 @@ def main():
             print(f"{i+1:<4} {e['date']:<13} {e['session']:<6} {e['fac']:<10} {e['ctype']:<10} {e['proc']}")
         print(f"\nTotal: {len(entries)} entries")
         return
-
     driver = make_driver()
     ok, fail = 0, 0
     try:
-        if not do_login(driver):
-            print("Initial login failed!"); sys.exit(1)
+        if not do_login(driver): sys.exit(1)
         for i, e in enumerate(entries):
             try:
                 if do_entry(driver, e, i): ok += 1
