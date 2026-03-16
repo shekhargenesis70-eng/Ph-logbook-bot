@@ -38,7 +38,7 @@ jobs:
         env:
           LB_USER: ${{ secrets.LB_USER }}
           LB_PASS: ${{ secrets.LB_PASS }}
-          DRY_RUN: ${{ github.event.inputs.dry_run == 'preview' && 'true' || 'false' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
         run: python logbook_bot.py
 
       - name: Upload screenshots
