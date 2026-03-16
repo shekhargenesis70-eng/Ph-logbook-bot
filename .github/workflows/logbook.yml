@@ -1,4 +1,4 @@
-name: ðŸ“‹ PG Logbook Automation
+name: PG Logbook Automation
 
 on:
   workflow_dispatch:
@@ -9,50 +9,42 @@ on:
         default: 'preview'
         type: choice
         options:
-          - preview        # just print all 85 entries, no submission
-          - submit         # actually fill the logbook
+          - preview
+          - submit
 
 jobs:
   fill-logbook:
     runs-on: ubuntu-latest
-    timeout-minutes: 90        # 85 entries Ã— ~1 min each
+    timeout-minutes: 90
 
     steps:
-      - name: ðŸ“¥ Checkout repo
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: ðŸ Set up Python 3.11
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: ðŸŒ Install Chrome
+      - name: Install Chrome
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y google-chrome-stable
 
-      - name: ðŸ“¦ Install Python dependencies
+      - name: Install Python dependencies
         run: pip install selenium webdriver-manager
 
-      - name: ðŸ¤– Run logbook bot
+      - name: Run logbook bot
         env:
-          LB_USER:  ${{ secrets.LB_USER }}
-          LB_PASS:  ${{ secrets.LB_PASS }}
-          DRY_RUN:  ${{ github.event.inputs.dry_run == 'preview' && 'true' || 'false' }}
+          LB_USER: ${{ secrets.LB_USER }}
+          LB_PASS: ${{ secrets.LB_PASS }}
+          DRY_RUN: ${{ github.event.inputs.dry_run == 'preview' && 'true' || 'false' }}
         run: python logbook_bot.py
 
-      - name: ðŸ“¸ Upload all screenshots
+      - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: screenshots
           path: "screenshot_*.png"
           retention-days: 5
-
-      - name: âŒ Upload failure screenshots
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: failures
-          path: "*_FAILED.png"
-          retention-days: 7
