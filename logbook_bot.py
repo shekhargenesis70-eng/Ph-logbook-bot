@@ -2,7 +2,7 @@
 import os, sys, time, random
 from datetime import date, timedelta
 from selenium import webdriver
-from selenium.webdriver.by import By
+from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
