@@ -20,7 +20,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 USER    = os.environ.get("LB_USER", "S240128")
 PASS    = os.environ.get("LB_PASS", "")
 BASE    = "https://myapp.in/pglogbook"
-DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
+DRY_RUN = os.environ.get("DRY_RUN", "preview") == "preview"
 
 # Faculty code → name map
 FACULTY = [
