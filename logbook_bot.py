@@ -26,15 +26,18 @@ def gen_entries():
         return "Seminars" if (i + 1) % 7 == 0 else "Other"
     for i, n in enumerate(spread(40, 55, 27)):
         d = date(2025, 12, 5) + timedelta(i); p = f"{n}usgs performed"
-        rows.append(dict(date=d.strftime("%d/%m/%Y"), proc=p, desc=p, caption=p, fac=next_fac(), ctype=class_type(i), session="2025"))
+        rows.append(dict(date=d.strftime("%d/%m/%Y"), proc=p, desc=p, caption=p,
+                         fac=next_fac(), ctype=class_type(i), session="2025"))
     random.seed(42)
     for i in range(31):
         d = date(2026, 1, 1) + timedelta(i)
         p = f"Ct cases drafted {random.randint(10,15)} and {random.randint(2,5)} MRI"
-        rows.append(dict(date=d.strftime("%d/%m/%Y"), proc=p, desc=p, caption=p, fac=next_fac(), ctype=class_type(i), session="2026"))
+        rows.append(dict(date=d.strftime("%d/%m/%Y"), proc=p, desc=p, caption=p,
+                         fac=next_fac(), ctype=class_type(i), session="2026"))
     for i, n in enumerate(spread(40, 55, 27)):
         d = date(2026, 2, 1) + timedelta(i); p = f"{n}usgs performed"
-        rows.append(dict(date=d.strftime("%d/%m/%Y"), proc=p, desc=p, caption=p, fac=next_fac(), ctype=class_type(i), session="2026"))
+        rows.append(dict(date=d.strftime("%d/%m/%Y"), proc=p, desc=p, caption=p,
+                         fac=next_fac(), ctype=class_type(i), session="2026"))
     return rows
 
 def make_driver():
@@ -44,7 +47,8 @@ def make_driver():
     o.add_argument("--disable-dev-shm-usage")
     o.add_argument("--disable-gpu")
     o.add_argument("--window-size=1920,1080")
-    o.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+    o.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     o.add_argument("--disable-blink-features=AutomationControlled")
     o.add_experimental_option("excludeSwitches", ["enable-automation"])
     o.add_experimental_option("useAutomationExtension", False)
@@ -95,11 +99,14 @@ def debug_form(driver, label):
     for inp in driver.find_elements(By.TAG_NAME, "input"):
         itype = (inp.get_attribute("type") or "text").lower()
         if itype != "hidden":
-            print(f"    INPUT id={inp.get_attribute('id')} ph={inp.get_attribute('placeholder')} type={itype} vis={inp.is_displayed()}")
+            print(f"    INPUT id={inp.get_attribute('id')} "
+                  f"ph={inp.get_attribute('placeholder')} "
+                  f"type={itype} vis={inp.is_displayed()}")
     for sel in driver.find_elements(By.TAG_NAME, "select"):
         try:
             s = Select(sel)
-            print(f"    SELECT id={sel.get_attribute('id')}: {[o.text for o in s.options[:6]]}")
+            print(f"    SELECT id={sel.get_attribute('id')}: "
+                  f"{[o.text for o in s.options[:6]]}")
         except: pass
     for btn in driver.find_elements(By.TAG_NAME, "button"):
         t = btn.text.strip()
@@ -126,97 +133,189 @@ def do_login(driver):
     except:
         try:
             btn = driver.find_element(By.XPATH, "//button[contains(.,'LOGIN') or contains(.,'Login')]")
-            js_click(driver, btn); print("  Clicked LOGIN fallback")
+            js_click(driver, btn)
         except Exception as ex: print(f"  Login btn error: {ex}")
     time.sleep(5); dismiss_alert(driver)
     if is_logged_out(driver):
         print("  Login FAILED!"); shot(driver, "LOGIN_FAILED"); return False
     print(f"  Logged in! URL: {driver.current_url}"); return True
 
-def navigate_to_entry_list(driver):
-    # Step 1: Home
+def navigate_to_day_to_day(driver, entry_idx):
+    """
+    Full navigation: Home -> PG LOG BOOK -> Dashboard -> Day to Day Activities list
+    Returns True if we land on the entry list page with + Add button visible
+    """
+    # ── Step 1: Home page ──────────────────────────────────────────────────
     driver.get(f"{BASE}/apps/Common/Home.aspx")
     time.sleep(3); dismiss_alert(driver)
     if is_logged_out(driver): return False
+    shot(driver, f"{entry_idx:03d}_nav1_home")
 
-    # Step 2: Click PG LOG BOOK
-    try:
-        el = driver.find_element(By.XPATH,
-            "//*[contains(text(),'PG LOG BOOK') or contains(text(),'PG Log Book')]")
-        js_click(driver, el); time.sleep(3); dismiss_alert(driver)
-        print(f"  PG LOG BOOK -> {driver.current_url}")
-    except:
-        driver.get(f"{BASE}/apps/PGLogBook/PGLogBookDashboard.aspx?WAT=60")
-        time.sleep(3); dismiss_alert(driver)
-        print(f"  Dashboard direct -> {driver.current_url}")
-
-    if is_logged_out(driver): return False
-
-    # Step 3: Click hamburger next to Day to Day Activities
-    try:
-        el = driver.find_element(By.XPATH,
-            "//tr[td[contains(text(),'Day to Day')]]//a | "
-            "//tr[td[contains(text(),'Day to Day')]]/td[1]/a | "
-            "//tr[td[contains(text(),'Day to Day')]]/td[2]/a")
-        js_click(driver, el); time.sleep(3); dismiss_alert(driver)
-        print(f"  Day to Day -> {driver.current_url}")
-    except Exception as ex:
-        print(f"  Day to Day click error: {ex}")
-        driver.get(f"{BASE}/apps/PGLogBook/PGLogBookEntry.aspx")
-        time.sleep(3); dismiss_alert(driver)
-        print(f"  Entry page direct -> {driver.current_url}")
-
-    if is_logged_out(driver): return False
-    return True
-
-def click_add_button(driver):
+    # ── Step 2: Click PG LOG BOOK ──────────────────────────────────────────
+    pg_clicked = False
     for selector in [
-        "//*[contains(@onclick,'subAdd')]",
-        "//a[contains(.,'+ Add')]",
-        "//a[normalize-space()='+ Add']",
-        "//*[contains(@class,'btn')][contains(.,'Add')]",
-        "//button[contains(.,'Add') and not(contains(.,'More'))]",
-        "//a[contains(.,'Add') and not(contains(.,'More'))]",
-        "//input[@value[contains(.,'Add')]]",
+        "//*[contains(text(),'PG LOG BOOK')]",
+        "//*[contains(text(),'PG Log Book')]",
+        "//*[contains(text(),'PGLOG')]",
+        "//a[contains(@href,'PGLogBook')]",
+        "//button[contains(@class,'btn')]",
+        "//*[contains(@class,'btn')]",
     ]:
         try:
             el = driver.find_element(By.XPATH, selector)
-            print(f"  Add button: {el.get_attribute('onclick') or el.text}")
+            print(f"  PG LOG BOOK btn: {el.text[:40]}")
+            js_click(driver, el); time.sleep(4); dismiss_alert(driver)
+            pg_clicked = True; break
+        except: continue
+
+    if not pg_clicked:
+        # Direct to dashboard
+        driver.get(f"{BASE}/apps/PGLogBook/PGLogBookDashboard.aspx?WAT=60")
+        time.sleep(4); dismiss_alert(driver)
+
+    print(f"  After PG LOG BOOK: {driver.current_url}")
+    shot(driver, f"{entry_idx:03d}_nav2_dashboard")
+    if is_logged_out(driver): return False
+
+    # ── Step 3: Debug dashboard - print ALL links ──────────────────────────
+    if entry_idx <= 1:
+        print("  --- DASHBOARD LINKS ---")
+        for a in driver.find_elements(By.TAG_NAME, "a"):
+            print(f"    <a> href={a.get_attribute('href')} onclick={a.get_attribute('onclick')} text={a.text[:30]}")
+        print("  --- DASHBOARD ROWS ---")
+        for tr in driver.find_elements(By.TAG_NAME, "tr"):
+            print(f"    <tr> text={tr.text[:80]}")
+
+    # ── Step 4: Wait for table, then click Day to Day ─────────────────────
+    dta_clicked = False
+
+    # Wait up to 10s for table rows to appear
+    try:
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.XPATH, "//td[contains(.,'Day to Day')]"))
+        )
+        print("  Table loaded - Day to Day found")
+    except:
+        print("  Table did not load within 10s")
+
+    # Try every possible selector for the hamburger/link
+    dta_selectors = [
+        # Row containing Day to Day - first anchor
+        "//tr[.//td[contains(text(),'Day to Day')]]//a[1]",
+        # Row containing Day to Day - any link
+        "//tr[.//td[contains(.,'Day to Day')]]//a",
+        # Direct text match
+        "//td[contains(text(),'Day to Day Activities')]/preceding-sibling::td//a",
+        "//td[contains(text(),'Day to Day')]/preceding-sibling::td//a",
+        # Hamburger icon by row position (row 1 of data)
+        "(//table//tr[position()>1]//a)[1]",
+        # Any link with onclick containing entry/log
+        "//a[contains(@onclick,'Entry') or contains(@href,'Entry')]",
+        # Span with hamburger icon
+        "//tr[.//td[contains(.,'Day to Day')]]/td[1]//span",
+        "//tr[.//td[contains(.,'Day to Day')]]/td[2]//span",
+    ]
+
+    for sel in dta_selectors:
+        try:
+            el = driver.find_element(By.XPATH, sel)
+            print(f"  Clicking DTA: href={el.get_attribute('href')} text={el.text[:20]}")
+            js_click(driver, el); time.sleep(4); dismiss_alert(driver)
+            dta_clicked = True; break
+        except: continue
+
+    if not dta_clicked:
+        # Try WAT=1 for Day to Day (row 1)
+        print("  Trying WAT parameter URL...")
+        for wat in ["1", "2", "60"]:
+            driver.get(f"{BASE}/apps/PGLogBook/PGLogBookEntry.aspx?WAT={wat}")
+            time.sleep(3); dismiss_alert(driver)
+            if "Entry" in driver.current_url:
+                print(f"  Entry page via WAT={wat}: {driver.current_url}")
+                dta_clicked = True; break
+
+    if not dta_clicked:
+        driver.get(f"{BASE}/apps/PGLogBook/PGLogBookEntry.aspx")
+        time.sleep(3); dismiss_alert(driver)
+        print(f"  Entry page direct: {driver.current_url}")
+
+    shot(driver, f"{entry_idx:03d}_nav3_entry_list")
+    if is_logged_out(driver): return False
+    return True
+
+def click_add(driver, entry_idx):
+    """Click the + Add button"""
+    for selector in [
+        "//*[contains(@onclick,'subAdd')]",
+        "//a[normalize-space()='+ Add']",
+        "//a[contains(.,'+ Add')]",
+        "//*[contains(@class,'btn')][contains(.,'Add') and not(contains(.,'More'))]",
+        "//button[contains(.,'Add') and not(contains(.,'More'))]",
+        "//a[contains(.,'Add') and not(contains(.,'More'))]",
+        "//input[@value='+ Add']",
+        "//input[contains(@value,'Add')]",
+    ]:
+        try:
+            el = driver.find_element(By.XPATH, selector)
+            print(f"  Add: onclick={el.get_attribute('onclick') or el.text[:20]}")
             js_click(driver, el); time.sleep(4); dismiss_alert(driver)
             return True
         except: continue
+
+    # Direct JS call
     try:
         driver.execute_script("subAdd('A');")
         time.sleep(4); dismiss_alert(driver)
         print("  Called subAdd('A')"); return True
-    except Exception as ex: print(f"  subAdd error: {ex}")
+    except Exception as ex: print(f"  subAdd failed: {ex}")
     return False
 
 def select_session(driver, session_year):
     SEL_ID = "cboStudentSessionDetail"
-    for _ in range(10):
+
+    # Wait up to 15s for options
+    print(f"  Waiting for session dropdown...")
+    for i in range(15):
         try:
             s = Select(driver.find_element(By.ID, SEL_ID))
-            opts = [o.text for o in s.options if "Select" not in o.text and o.text.strip()]
-            if opts: break
+            opts = [o.text for o in s.options if o.text.strip() and "Select" not in o.text]
+            if opts:
+                print(f"  Dropdown loaded after {i}s: {opts}")
+                break
         except: pass
         time.sleep(1)
+    else:
+        # Print page source around dropdown for debug
+        try:
+            src = driver.page_source
+            idx = src.find(SEL_ID)
+            if idx >= 0:
+                print(f"  Page src around dropdown: {src[max(0,idx-100):idx+400]}")
+        except: pass
+
     try:
         sel_el = driver.find_element(By.ID, SEL_ID)
         s = Select(sel_el)
         all_opts = [o.text for o in s.options]
-        print(f"  Session options: {all_opts}")
+        print(f"  Session all options: {all_opts}")
+
+        # Match session_year
         for o in all_opts:
             if session_year in o and "Select" not in o:
                 s.select_by_visible_text(o)
-                driver.execute_script("arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", sel_el)
+                driver.execute_script(
+                    "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", sel_el)
                 print(f"  Session -> {o}"); time.sleep(3); dismiss_alert(driver); return True
+
+        # Fallback: first non-empty
         for o in all_opts:
             if "Select" not in o and o.strip():
                 s.select_by_visible_text(o)
-                driver.execute_script("arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", sel_el)
+                driver.execute_script(
+                    "arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", sel_el)
                 print(f"  Session fallback -> {o}"); time.sleep(3); dismiss_alert(driver); return True
-        print(f"  No session option for {session_year}"); return False
+
+        print(f"  No session option found! Options: {all_opts}"); return False
     except Exception as ex:
         print(f"  Session error: {ex}"); return False
 
@@ -229,10 +328,12 @@ def click_save(driver):
             js_click(driver, el); print("  Clicked Save"); return True
         except: continue
     for el in driver.find_elements(By.TAG_NAME, "button"):
-        if "save" in el.text.lower(): js_click(driver, el); print("  Clicked Save (scan)"); return True
+        if "save" in el.text.lower():
+            js_click(driver, el); print("  Clicked Save (scan)"); return True
     for el in driver.find_elements(By.TAG_NAME, "input"):
         v = el.get_attribute("value") or ""
-        if "save" in v.lower(): js_click(driver, el); print("  Clicked Save (input)"); return True
+        if "save" in v.lower():
+            js_click(driver, el); print("  Clicked Save (input)"); return True
     return False
 
 def do_entry(driver, e, idx):
@@ -242,12 +343,11 @@ def do_entry(driver, e, idx):
         print("  Session expired - re-logging in...")
         if not do_login(driver): return False
 
-    if not navigate_to_entry_list(driver):
-        shot(driver, f"{idx+1:03d}_NAV_FAILED"); return False
+    # Full navigation every entry
+    if not navigate_to_day_to_day(driver, idx + 1):
+        print("  Navigation failed"); return False
 
-    shot(driver, f"{idx+1:03d}_a_list")
-
-    if not click_add_button(driver):
+    if not click_add(driver, idx + 1):
         shot(driver, f"{idx+1:03d}_ADD_FAILED"); return False
 
     shot(driver, f"{idx+1:03d}_b_form")
@@ -259,7 +359,7 @@ def do_entry(driver, e, idx):
     shot(driver, f"{idx+1:03d}_c_after_session")
     if idx < 3: debug_form(driver, f"AFTER_SESSION_{idx+1}")
 
-    # Name of Procedure
+    # Procedure
     proc_filled = False
     for fid in ["txtActivityName","txtProcedureName","txtActivity","txtLogActivity",
                 "txtActName","txtProc","txtName","txtTitle","txtLogName"]:
@@ -287,14 +387,14 @@ def do_entry(driver, e, idx):
             if "date" in iid and "current" not in iid and itype != "hidden":
                 js_fill(driver, inp, e["date"]); print(f"  Date -> {inp.get_attribute('id')}"); break
 
-    # Faculty — txtApprover confirmed
+    # Faculty
     try:
         el = driver.find_element(By.ID, "txtApprover")
         el.clear(); el.send_keys(e["fac"]); time.sleep(2.5); dismiss_alert(driver)
         try:
             sugg = driver.find_elements(By.XPATH,
                 "//*[contains(@class,'ui-menu-item') or contains(@class,'autocomplete')]")
-            if sugg: js_click(driver, sugg[0]); print("  Faculty autocomplete selected")
+            if sugg: js_click(driver, sugg[0]); print("  Faculty autocomplete")
             else: print(f"  Faculty -> txtApprover: {e['fac']}")
         except: pass
     except Exception as ex: print(f"  Faculty error: {ex}")
@@ -316,7 +416,8 @@ def do_entry(driver, e, idx):
                     if "Attended" in o: s.select_by_visible_text(o); print(f"  Classes -> {o}"); break
             elif any("Other" in o for o in opts) and any("Sem" in o for o in opts):
                 for o in opts:
-                    if e["ctype"].lower() in o.lower(): s.select_by_visible_text(o); print(f"  ClassType -> {o}"); break
+                    if e["ctype"].lower() in o.lower():
+                        s.select_by_visible_text(o); print(f"  ClassType -> {o}"); break
         except: continue
 
     # Description
@@ -328,14 +429,13 @@ def do_entry(driver, e, idx):
         for ta in driver.find_elements(By.TAG_NAME, "textarea"):
             iid = (ta.get_attribute("id") or "").lower()
             if "desc" in iid or "remark" in iid:
-                js_fill(driver, ta, e["desc"]); print(f"  Description -> {ta.get_attribute('id')}"); break
+                js_fill(driver, ta, e["desc"]); print(f"  Desc -> {ta.get_attribute('id')}"); break
 
-    # File Caption — confirmed txtFileDescription
+    # Caption
     fill_by_id(driver, "txtFileDescription", e["caption"], "Caption")
 
     shot(driver, f"{idx+1:03d}_d_before_save")
 
-    # Save
     if not click_save(driver):
         debug_form(driver, f"SAVE_MISSING_{idx+1}")
         shot(driver, f"{idx+1:03d}_SAVE_FAILED"); print("  SAVE FAILED!"); return False
@@ -359,43 +459,4 @@ def do_entry(driver, e, idx):
             js_click(driver, el); submitted = True; print("  Clicked Submit"); break
         except: continue
 
-    time.sleep(3); dismiss_alert(driver)
-
-    if submitted:
-        shot(driver, f"{idx+1:03d}_f_done"); print("  OK submitted!"); return True
-    else:
-        debug_form(driver, f"SUBMIT_MISSING_{idx+1}")
-        shot(driver, f"{idx+1:03d}_SUBMIT_FAILED"); print("  SUBMIT FAILED!"); return False
-
-def main():
-    entries = gen_entries()
-    if DRY_RUN:
-        print(f"\n{'='*72}\nDRY RUN - {len(entries)} entries\n{'='*72}")
-        print(f"{'#':<4} {'Date':<13} {'Ses':<6} {'Fac':<10} {'CType':<10} Procedure")
-        print("-"*72)
-        for i, e in enumerate(entries):
-            print(f"{i+1:<4} {e['date']:<13} {e['session']:<6} {e['fac']:<10} {e['ctype']:<10} {e['proc']}")
-        print(f"\nTotal: {len(entries)} entries"); return
-
-    driver = make_driver()
-    ok = 0; fail = 0
-    try:
-        if not do_login(driver): sys.exit(1)
-        for i, e in enumerate(entries):
-            try:
-                if do_entry(driver, e, i): ok += 1
-                else: fail += 1
-            except Exception as ex:
-                print(f"  CRASH entry {i+1}: {ex}")
-                try: shot(driver, f"{i+1:03d}_CRASH")
-                except: pass
-                fail += 1
-            time.sleep(random.uniform(3.0, 5.0))
-    finally:
-        try: driver.quit()
-        except: pass
-    print(f"\n{'='*50}\nFINISHED: {ok} submitted | {fail} failed")
-    if fail > 0: sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+    time.sleep(3); d
