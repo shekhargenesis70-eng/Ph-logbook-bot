@@ -48,7 +48,6 @@ def make_driver():
     o.add_argument("--disable-blink-features=AutomationControlled")
     o.add_experimental_option("excludeSwitches", ["enable-automation"])
     o.add_experimental_option("useAutomationExtension", False)
-    o.set_capability("goog:loggingPrefs", {"browser": "ALL"})
     d = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=o)
     d.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     return d
@@ -57,7 +56,7 @@ def dismiss_alert(driver):
     try:
         WebDriverWait(driver, 2).until(EC.alert_is_present())
         alert = driver.switch_to.alert
-        print(f"  Alert dismissed: {alert.text}")
+        print(f"  Alert: {alert.text}")
         alert.accept()
         time.sleep(1)
     except: pass
@@ -78,20 +77,6 @@ def js_fill(driver, el, value):
     driver.execute_script("arguments[0].value = arguments[1];", el, value)
     driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles:true}));", el)
     driver.execute_script("arguments[0].dispatchEvent(new Event('input', {bubbles:true}));", el)
-
-def print_js_errors(driver):
-    try:
-        for log in driver.get_log("browser"):
-            if log["level"] in ["SEVERE", "WARNING"]:
-                print(f"  JS {log['level']}: {log['message'][:300]}")
-    except: pass
-
-def wait_for_jquery(driver, timeout=10):
-    try:
-        WebDriverWait(driver, timeout).until(
-            lambda d: d.execute_script("return typeof jQuery !== 'undefined' && jQuery.active === 0")
-        )
-    except: pass
 
 def is_logged_out(driver):
     dismiss_alert(driver)
@@ -128,135 +113,6 @@ def do_login(driver):
     print(f"  Logged in! URL: {driver.current_url}")
     return True
 
-def get_session_opts(driver):
-    try:
-        s = Select(driver.find_element(By.ID, "cboStudentSessionDetail"))
-        return [o.text for o in s.options if "Select" not in o.text and o.text.strip()]
-    except: return []
-
-def try_populate_session(driver, session_year):
-    dismiss_alert(driver)
-
-    # Strategy 1: Wait + jQuery idle
-    wait_for_jquery(driver, 10)
-    time.sleep(5)
-    dismiss_alert(driver)
-    opts = get_session_opts(driver)
-    if opts: return opts
-
-    print_js_errors(driver)
-    print("  Strategy 1 failed, trying click...")
-
-    # Strategy 2: Click/focus the dropdown
-    try:
-        el = driver.find_element(By.ID, "cboStudentSessionDetail")
-        driver.execute_script("arguments[0].scrollIntoView(true);", el)
-        el.click(); time.sleep(3)
-        dismiss_alert(driver)
-    except: pass
-    opts = get_session_opts(driver)
-    if opts: return opts
-
-    # Strategy 3: Print relevant script tags for debugging
-    try:
-        scripts = driver.find_elements(By.TAG_NAME, "script")
-        for s in scripts:
-            c = s.get_attribute("innerHTML") or ""
-            if "cboStudentSessionDetail" in c or "BindSession" in c or "GetSession" in c:
-                print(f"  Relevant script: {c[:600]}")
-                break
-    except: pass
-
-    # Strategy 4: __doPostBack patterns
-    for target in ["cboStudentSessionDetail",
-                   "ctl00$ContentPlaceHolder1$cboStudentSessionDetail",
-                   "ScriptManager1"]:
-        try:
-            driver.execute_script(f"__doPostBack('{target}','');")
-            time.sleep(4)
-            dismiss_alert(driver)
-            opts = get_session_opts(driver)
-            if opts: return opts
-        except: pass
-
-    # Strategy 5: Direct AJAX call using session cookies
-    try:
-        cookies = {c["name"]: c["value"] for c in driver.get_cookies()}
-        headers = {
-            "Content-Type": "application/json; charset=utf-8",
-            "X-Requested-With": "XMLHttpRequest",
-            "Referer": driver.current_url,
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }
-        base_url = f"{BASE}/apps/PGLogBook/"
-        for ep in ["PGLogBookEntry.aspx/GetStudentSession",
-                   "PGLogBookEntry.aspx/BindSession",
-                   "PGLogBookEntry.aspx/GetSession",
-                   "PGLogBookEntry.aspx/LoadSession"]:
-            try:
-                r = requests.post(base_url + ep, cookies=cookies,
-                                  headers=headers, json={}, timeout=8)
-                print(f"  AJAX {ep}: {r.status_code} | {r.text[:300]}")
-            except Exception as ex:
-                print(f"  AJAX {ep}: {ex}")
-    except Exception as ex:
-        print(f"  Requests error: {ex}")
-
-    # Strategy 6: Reload and retry
-    print("  Reloading page...")
-    driver.refresh()
-    time.sleep(5)
-    dismiss_alert(driver)
-    wait_for_jquery(driver, 10)
-    for selector in ["//a[contains(.,'Add')]","//button[contains(.,'Add')]",
-                     "//*[contains(@class,'btn')][contains(.,'Add')]"]:
-        try:
-            el = driver.find_element(By.XPATH, selector)
-            js_click(driver, el); time.sleep(4)
-            dismiss_alert(driver); break
-        except: continue
-    opts = get_session_opts(driver)
-    if opts: return opts
-
-    # Strategy 7: Print page source around the dropdown
-    try:
-        src = driver.page_source
-        idx = src.find("cboStudentSessionDetail")
-        if idx >= 0:
-            print(f"  Page source around dropdown:\n{src[max(0,idx-300):idx+600]}")
-    except: pass
-
-    return []
-
-def select_session_option(driver, session_year, opts):
-    try:
-        sel_el = driver.find_element(By.ID, "cboStudentSessionDetail")
-        s = Select(sel_el)
-        all_opts = [o.text for o in s.options]
-        print(f"  Available options: {all_opts}")
-        for o in all_opts:
-            if session_year in o and "Select" not in o:
-                s.select_by_visible_text(o)
-                driver.execute_script(
-                    "arguments[0].dispatchEvent(new Event('change', {bubbles:true}));", sel_el)
-                print(f"  Selected: {o}")
-                time.sleep(4)
-                dismiss_alert(driver)
-                return True
-        # Fallback: first non-default option
-        for o in all_opts:
-            if "Select" not in o and o.strip():
-                s.select_by_visible_text(o)
-                driver.execute_script(
-                    "arguments[0].dispatchEvent(new Event('change', {bubbles:true}));", sel_el)
-                print(f"  Selected fallback: {o}")
-                time.sleep(4)
-                dismiss_alert(driver)
-                return True
-    except Exception as ex:
-        print(f"  Select option error: {ex}")
-    return False
-
 def debug_form(driver, label):
     dismiss_alert(driver)
     print(f"  --- DEBUG {label} ---")
@@ -275,7 +131,9 @@ def debug_form(driver, label):
         if btn.text.strip():
             print(f"    BUTTON: '{btn.text.strip()}' id={btn.get_attribute('id')}")
     for inp in driver.find_elements(By.XPATH, "//input[@type='submit' or @type='button']"):
-        print(f"    BTN-INPUT value={inp.get_attribute('value')} id={inp.get_attribute('id')}")
+        v = inp.get_attribute("value") or ""
+        if v.strip():
+            print(f"    BTN-INPUT value={v} id={inp.get_attribute('id')}")
 
 def fill_field(driver, field_ids, value, label):
     for fid in field_ids:
@@ -288,10 +146,30 @@ def fill_field(driver, field_ids, value, label):
         except: continue
     return False
 
+def select_dropdown(driver, keyword, label, skip_ids=None):
+    skip_ids = skip_ids or []
+    for sel_el in driver.find_elements(By.TAG_NAME, "select"):
+        sid = (sel_el.get_attribute("id") or "").lower()
+        if any(s in sid for s in skip_ids): continue
+        try:
+            s = Select(sel_el)
+            opts = [o.text for o in s.options]
+            for o in opts:
+                if keyword.lower() in o.lower():
+                    s.select_by_visible_text(o)
+                    print(f"  {label} → {o}")
+                    return True
+        except: continue
+    return False
+
 def click_save(driver):
     dismiss_alert(driver)
-    for selector in ["//input[@value='Save']","//button[normalize-space()='Save']",
-                     "//button[contains(.,'Save')]","//input[contains(@value,'Save')]"]:
+    for selector in [
+        "//input[@value='Save']",
+        "//button[normalize-space()='Save']",
+        "//button[contains(.,'Save')]",
+        "//input[contains(@value,'Save')]",
+    ]:
         try:
             el = driver.find_element(By.XPATH, selector)
             js_click(driver, el)
@@ -300,50 +178,115 @@ def click_save(driver):
         except: continue
     return False
 
-def do_entry(driver, e, idx):
-    print(f"\n[{idx+1:02d}/85] {e['date']} | {e['session']} | {e['fac']} | {e['ctype']} | {e['proc']}")
-
+def open_add_form(driver):
+    """Navigate to add form using subAdd JS call — the correct way"""
     driver.get(f"{BASE}/apps/PGLogBook/PGLogBookEntry.aspx")
     time.sleep(3)
     dismiss_alert(driver)
 
     if is_logged_out(driver):
-        print("  Session expired - re-logging in...")
-        if not do_login(driver): return False
-        driver.get(f"{BASE}/apps/PGLogBook/PGLogBookEntry.aspx")
-        time.sleep(3)
-        dismiss_alert(driver)
+        return False
 
-    # Click Add
-    for selector in ["//a[contains(.,'Add')]","//button[contains(.,'Add')]",
-                     "//*[contains(@class,'btn')][contains(.,'Add')]",
-                     "//input[@value[contains(.,'Add')]]"]:
+    # Call subAdd('A') directly — this is what the Add button does
+    try:
+        driver.execute_script("subAdd('A');")
+        print("  Called subAdd('A')")
+        time.sleep(4)
+        dismiss_alert(driver)
+        return True
+    except Exception as ex:
+        print(f"  subAdd failed: {ex}")
+
+    # Fallback: try clicking the + Add button
+    for selector in [
+        "//a[contains(@onclick,'subAdd') or contains(@onclick,'Add')]",
+        "//*[contains(@onclick,'subAdd')]",
+        "//a[contains(.,'Add') and not(contains(.,'More'))]",
+        "//button[contains(.,'Add') and not(contains(.,'More'))]",
+        "//*[contains(@class,'btn')][contains(.,'Add') and not(contains(.,'More'))]",
+    ]:
         try:
             el = driver.find_element(By.XPATH, selector)
-            js_click(driver, el); time.sleep(3)
-            dismiss_alert(driver); break
+            print(f"  Clicking Add: {el.get_attribute('onclick') or el.text}")
+            js_click(driver, el)
+            time.sleep(4)
+            dismiss_alert(driver)
+            return True
         except: continue
+
+    return False
+
+def get_session_opts(driver):
+    try:
+        s = Select(driver.find_element(By.ID, "cboStudentSessionDetail"))
+        return [o.text for o in s.options if "Select" not in o.text and o.text.strip()]
+    except: return []
+
+def select_session(driver, session_year):
+    opts = get_session_opts(driver)
+    print(f"  Session options: {opts}")
+    if not opts:
+        print("  Session dropdown empty!")
+        return False
+    try:
+        sel_el = driver.find_element(By.ID, "cboStudentSessionDetail")
+        s = Select(sel_el)
+        for o in [o.text for o in s.options]:
+            if session_year in o and "Select" not in o:
+                s.select_by_visible_text(o)
+                driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles:true}));", sel_el)
+                print(f"  Session → {o}")
+                time.sleep(3)
+                dismiss_alert(driver)
+                return True
+        # Fallback first available
+        for o in [o.text for o in s.options]:
+            if "Select" not in o and o.strip():
+                s.select_by_visible_text(o)
+                driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles:true}));", sel_el)
+                print(f"  Session fallback → {o}")
+                time.sleep(3)
+                dismiss_alert(driver)
+                return True
+    except Exception as ex:
+        print(f"  Session select error: {ex}")
+    return False
+
+def do_entry(driver, e, idx):
+    print(f"\n[{idx+1:02d}/85] {e['date']} | {e['session']} | {e['fac']} | {e['ctype']} | {e['proc']}")
+
+    # Open the Add form via subAdd('A')
+    ok = open_add_form(driver)
+    if not ok:
+        if is_logged_out(driver):
+            print("  Logged out — re-logging in...")
+            if not do_login(driver): return False
+            ok = open_add_form(driver)
+        if not ok:
+            shot(driver, f"{idx+1:03d}_ADD_FAILED")
+            print("  Could not open Add form"); return False
 
     shot(driver, f"{idx+1:03d}_a_form")
 
-    # Populate + select session year
-    opts = try_populate_session(driver, e["session"])
-    if not opts:
-        print("  Could not load session options!")
-        debug_form(driver, f"NO_SESSION_{idx+1}")
-        shot(driver, f"{idx+1:03d}_SESSION_FAILED")
-        return False
+    # Debug form on first 3 entries
+    if idx < 3:
+        debug_form(driver, f"ADD_FORM_{idx+1}")
 
-    if not select_session_option(driver, e["session"], opts):
-        return False
+    # Select session year
+    session_ok = select_session(driver, e["session"])
+    if not session_ok:
+        shot(driver, f"{idx+1:03d}_SESSION_FAILED")
+        print("  Session selection failed"); return False
 
     shot(driver, f"{idx+1:03d}_a2_after_session")
-    if idx < 2:
+
+    # Debug after session for first 3
+    if idx < 3:
         debug_form(driver, f"AFTER_SESSION_{idx+1}")
 
     # Name of Procedure
     proc_ids = ["txtActivityName","txtProcedureName","txtActivity","txtLogActivity",
-                "txtActName","txtProc","txtName","txtTitle","txtLogName"]
+                "txtActName","txtProc","txtName","txtTitle","txtLogName","txtActvName"]
     if not fill_field(driver, proc_ids, e["proc"], "Procedure"):
         skip = {"txtApprover","txtUserID","txtPassword","txtFileDescription"}
         for inp in driver.find_elements(By.TAG_NAME, "input"):
@@ -356,7 +299,7 @@ def do_entry(driver, e, idx):
                 print(f"  Procedure → fallback: {iid}"); break
 
     # Date
-    date_ids = ["txtActivityDate","txtDate","txtLogDate","txtDOA","txtEntryDate","txtActDate"]
+    date_ids = ["txtActivityDate","txtDate","txtLogDate","txtDOA","txtEntryDate","txtActDate","txtDt"]
     if not fill_field(driver, date_ids, e["date"], "Date"):
         for inp in driver.find_elements(By.TAG_NAME, "input"):
             iid   = (inp.get_attribute("id") or "").lower()
@@ -379,32 +322,31 @@ def do_entry(driver, e, idx):
     except Exception as ex:
         print(f"  Faculty error: {ex}")
 
-    # Dropdowns
+    # Dropdowns: Procedures, Work Type, Classes, Class Type
+    select_dropdown(driver, "Washed", "Procedures", skip_ids=["session"])
+    select_dropdown(driver, "Lab",    "WorkType",   skip_ids=["session"])
+    select_dropdown(driver, "Attended","Classes",   skip_ids=["session"])
+    # Class Type needs special handling for Other vs Seminars
     for sel_el in driver.find_elements(By.TAG_NAME, "select"):
+        sid = (sel_el.get_attribute("id") or "").lower()
+        if "session" in sid: continue
         try:
             s = Select(sel_el)
-            sid = (sel_el.get_attribute("id") or "").lower()
-            if "session" in sid: continue
             opts_text = [o.text for o in s.options]
-            if any("Washed" in o for o in opts_text):
-                for o in opts_text:
-                    if "Washed" in o: s.select_by_visible_text(o); print(f"  Procedures → {o}"); break
-            elif any("Lab" in o for o in opts_text):
-                for o in opts_text:
-                    if "Lab" in o: s.select_by_visible_text(o); print(f"  WorkType → {o}"); break
-            elif any("Attended" in o for o in opts_text):
-                for o in opts_text:
-                    if "Attended" in o: s.select_by_visible_text(o); print(f"  Classes → {o}"); break
-            elif any("Other" in o for o in opts_text) and any("Sem" in o for o in opts_text):
+            if any("Other" in o for o in opts_text) and any("Sem" in o for o in opts_text):
                 for o in opts_text:
                     if e["ctype"].lower() in o.lower():
-                        s.select_by_visible_text(o); print(f"  ClassType → {o}"); break
+                        s.select_by_visible_text(o)
+                        print(f"  ClassType → {o}"); break
+                break
         except: continue
 
     # Description
-    fill_field(driver, ["txtDescription","txtDesc","txtLogDesc","txtRemarks","txtLogDescription"], e["desc"], "Description")
+    fill_field(driver,
+               ["txtDescription","txtDesc","txtLogDesc","txtRemarks","txtLogDescription"],
+               e["desc"], "Description")
 
-    # File Caption — confirmed
+    # File Caption — confirmed txtFileDescription
     fill_field(driver, ["txtFileDescription"], e["caption"], "Caption")
 
     shot(driver, f"{idx+1:03d}_b_before_save")
@@ -412,7 +354,7 @@ def do_entry(driver, e, idx):
     # Save
     saved = click_save(driver)
     if not saved:
-        debug_form(driver, f"SAVE_BTN_MISSING_{idx+1}")
+        debug_form(driver, f"SAVE_MISSING_{idx+1}")
         shot(driver, f"{idx+1:03d}_SAVE_FAILED")
         print("  SAVE FAILED"); return False
 
@@ -436,10 +378,11 @@ def do_entry(driver, e, idx):
 
     time.sleep(2.5)
     dismiss_alert(driver)
+
     if submitted:
         print("  OK submitted"); return True
     else:
-        debug_form(driver, f"SUBMIT_BTN_MISSING_{idx+1}")
+        debug_form(driver, f"SUBMIT_MISSING_{idx+1}")
         shot(driver, f"{idx+1:03d}_SUBMIT_FAILED")
         print("  SUBMIT FAILED"); return False
 
@@ -453,6 +396,7 @@ def main():
             print(f"{i+1:<4} {e['date']:<13} {e['session']:<6} {e['fac']:<10} {e['ctype']:<10} {e['proc']}")
         print(f"\nTotal: {len(entries)} entries")
         return
+
     driver = make_driver()
     ok, fail = 0, 0
     try:
@@ -470,6 +414,7 @@ def main():
     finally:
         try: driver.quit()
         except: pass
+
     print(f"\nFINISHED: {ok} submitted | {fail} failed")
     if fail > 0: sys.exit(1)
 
